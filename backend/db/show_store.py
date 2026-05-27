@@ -28,6 +28,8 @@ def _get_conn():
 
 def init_db() -> None:
     """Create tables if they don't exist."""
+    from backend.db.feedback_store import init_feedback_table
+    init_feedback_table()
     with _get_conn() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS shows (

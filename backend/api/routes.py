@@ -2,9 +2,9 @@
 
 from fastapi import APIRouter, HTTPException
 
-from backend.db import show_store
+from backend.db import feedback_store, show_store
 from backend.metadata.enrich import enrich_show
-from backend.models.schemas import RecommendationRequest, RecommendationResponse, RecommendationResult, ShowInfo
+from backend.models.schemas import FeedbackSignal, RecommendationRequest, RecommendationResponse, RecommendationResult, ShowInfo
 from backend.recommender.engine import recommend_blended, recommend_by_show, recommend_by_text
 
 router = APIRouter()
@@ -85,6 +85,36 @@ def lookup_show(q: str):
     if not metadata:
         raise HTTPException(status_code=404, detail="No results found")
     return metadata
+
+
+# --- Feedback ---
+
+
+@router.post("/feedback", status_code=201)
+def submit_feedback(fb: FeedbackSignal):
+    """Record a like, dislike, or skip signal for a show.
+
+    Optionally scoped to a specific feature dimension (e.g. 'tone', 'pacing').
+    Accumulated signals will inform per-dimension weight tuning.
+    """
+    if not show_store.get_show(fb.show_id):
+        raise HTTPException(status_code=404, detail="Show not found")
+    row_id = feedback_store.record_feedback(fb)
+    return {"status": "recorded", "id": row_id}
+
+
+@router.get("/feedback/{show_id}")
+def get_show_feedback(show_id: str):
+    """Get all feedback recorded for a specific show."""
+    if not show_store.get_show(show_id):
+        raise HTTPException(status_code=404, detail="Show not found")
+    return feedback_store.get_feedback_for_show(show_id)
+
+
+@router.get("/feedback/summary/dimensions")
+def feedback_dimension_summary():
+    """Aggregate feedback counts by dimension and signal — for weight tuning."""
+    return feedback_store.get_dimension_feedback()
 
 
 # --- Recommendations ---
