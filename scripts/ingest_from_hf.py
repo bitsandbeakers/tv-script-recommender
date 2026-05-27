@@ -131,7 +131,12 @@ def main():
     chunks = chunk_script(combined)
     logger.info(f"Split into {len(chunks)} chunks for analysis")
 
-    features = extract_and_merge_features(chunks, show_name)
+    features = extract_and_merge_features(
+        chunks, show_name,
+        content_type=metadata.get("content_type", "Scripted"),
+        num_seasons=metadata.get("num_seasons", 1),
+        num_episodes=metadata.get("num_episodes", 0),
+    )
     logger.info(f"Extracted features: {features.style_summary}")
 
     # Embed and store

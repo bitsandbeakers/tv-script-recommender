@@ -98,6 +98,7 @@ class TMDBClient:
             "overview": details.get("overview", ""),
             "poster_url": f"{IMAGE_BASE}/w500{poster}" if poster else "",
             "status": details.get("status", ""),
+            "content_type": details.get("type", "Scripted"),
             "vote_average": details.get("vote_average", 0),
             "num_seasons": details.get("number_of_seasons", 0),
             "num_episodes": details.get("number_of_episodes", 0),

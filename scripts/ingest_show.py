@@ -96,6 +96,9 @@ def process_show(
     skip_llm: bool = False,
     year: int | None = None,
     imdb_id: str = "",
+    content_type: str = "Scripted",
+    num_seasons: int = 1,
+    num_episodes: int = 0,
 ) -> None:
     """Process downloaded subtitles: parse, extract features, embed, store."""
     all_dialogue = []
@@ -149,7 +152,15 @@ def process_show(
     chunks = chunk_script(combined)
     logger.info(f"Split into {len(chunks)} chunks for analysis")
 
-    features = extract_and_merge_features(chunks, show_name)
+    resolved_type = metadata.get("content_type", content_type)
+    resolved_seasons = metadata.get("num_seasons", num_seasons)
+    resolved_episodes = metadata.get("num_episodes", num_episodes)
+    features = extract_and_merge_features(
+        chunks, show_name,
+        content_type=resolved_type,
+        num_seasons=resolved_seasons,
+        num_episodes=resolved_episodes,
+    )
     logger.info(f"Extracted features: {features.style_summary}")
 
     # Generate embedding from features
