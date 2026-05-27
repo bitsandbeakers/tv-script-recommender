@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -21,8 +22,7 @@ from backend.db.vector_store import upsert_show as upsert_show_vector
 from backend.metadata.enrich import enrich_show
 from backend.models.schemas import ShowInfo
 from backend.pipeline.embed import embed_text, features_to_text
-from backend.pipeline.extract import extract_and_merge_features
-from backend.pipeline.ingest import chunk_script
+from backend.pipeline.extract import EpisodeDialogue, extract_show_features
 from backend.pipeline.srt_parser import extract_dialogue
 from backend.pipeline.subtitles import OpenSubtitlesClient
 
@@ -90,30 +90,38 @@ def download_and_save(client: OpenSubtitlesClient, show_name: str, episodes: lis
     return saved
 
 
+def _parse_episode_key(filename: str) -> tuple[int, int]:
+    """Extract season and episode numbers from filenames like S01E05."""
+    m = re.match(r"S(\d+)E(\d+)", filename, re.IGNORECASE)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return 1, 0
+
+
 def process_show(
     show_name: str,
     srt_paths: list[Path],
     skip_llm: bool = False,
     year: int | None = None,
     imdb_id: str = "",
-    content_type: str = "Scripted",
-    num_seasons: int = 1,
-    num_episodes: int = 0,
 ) -> None:
     """Process downloaded subtitles: parse, extract features, embed, store."""
-    all_dialogue = []
+    # Build structured episode data
+    episode_dialogues: list[EpisodeDialogue] = []
     for path in srt_paths:
         srt_content = path.read_text(encoding="utf-8", errors="replace")
         dialogue = extract_dialogue(srt_content)
-        if dialogue:
-            all_dialogue.append(f"--- {path.stem} ---\n{dialogue}")
+        if not dialogue:
+            continue
+        season, episode = _parse_episode_key(path.stem)
+        episode_dialogues.append(EpisodeDialogue(season=season, episode=episode, text=dialogue))
 
-    if not all_dialogue:
+    if not episode_dialogues:
         logger.warning(f"No dialogue extracted for {show_name}")
         return
 
-    combined = "\n\n".join(all_dialogue)
-    logger.info(f"Extracted {len(combined):,} chars of dialogue from {len(srt_paths)} episodes")
+    total_chars = sum(len(ep.text) for ep in episode_dialogues)
+    logger.info(f"Extracted {total_chars:,} chars of dialogue from {len(episode_dialogues)} episodes")
 
     show_id = show_name.lower().replace(" ", "_")
 
@@ -123,11 +131,11 @@ def process_show(
 
     if skip_llm:
         logger.info("Skipping LLM feature extraction (--skip-llm)")
+        combined = "\n\n".join(f"--- S{e.season:02d}E{e.episode:02d} ---\n{e.text}" for e in episode_dialogues)
         output_path = DATA_DIR / show_id / "dialogue.txt"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(combined, encoding="utf-8")
-        logger.info(f"Saved raw dialogue to {output_path}")
 
-        # Still save metadata even without LLM
         init_db()
         show_info = ShowInfo(
             id=show_id,
@@ -143,23 +151,16 @@ def process_show(
             status=metadata.get("status", ""),
             num_seasons=metadata.get("num_seasons", 0),
             num_episodes=metadata.get("num_episodes", 0),
-            num_episodes_analyzed=len(srt_paths),
+            num_episodes_analyzed=len(episode_dialogues),
         )
         upsert_show_metadata(show_info)
         return
 
-    # Chunk and extract features
-    chunks = chunk_script(combined)
-    logger.info(f"Split into {len(chunks)} chunks for analysis")
-
-    resolved_type = metadata.get("content_type", content_type)
-    resolved_seasons = metadata.get("num_seasons", num_seasons)
-    resolved_episodes = metadata.get("num_episodes", num_episodes)
-    features = extract_and_merge_features(
-        chunks, show_name,
-        content_type=resolved_type,
-        num_seasons=resolved_seasons,
-        num_episodes=resolved_episodes,
+    # Hierarchical feature extraction
+    features = extract_show_features(
+        episode_dialogues,
+        show_name,
+        content_type=metadata.get("content_type", "Scripted"),
     )
     logger.info(f"Extracted features: {features.style_summary}")
 
@@ -171,7 +172,7 @@ def process_show(
     # Store in vector DB
     vector_metadata = {
         "title": metadata.get("title", show_name),
-        "num_episodes": len(srt_paths),
+        "num_episodes": len(episode_dialogues),
         "style_summary": features.style_summary,
         "themes": ",".join(features.themes),
         "tone": ",".join(features.tone),
@@ -180,7 +181,7 @@ def process_show(
     upsert_show_vector(show_id, embedding, vector_metadata)
     logger.info(f"Stored {show_name} in vector database")
 
-    # Store in SQLite catalog with enriched metadata
+    # Store in SQLite catalog
     init_db()
     show_info = ShowInfo(
         id=show_id,
@@ -196,7 +197,7 @@ def process_show(
         status=metadata.get("status", ""),
         num_seasons=metadata.get("num_seasons", 0),
         num_episodes=metadata.get("num_episodes", 0),
-        num_episodes_analyzed=len(srt_paths),
+        num_episodes_analyzed=len(episode_dialogues),
         features=features,
     )
     upsert_show_metadata(show_info)
@@ -204,6 +205,7 @@ def process_show(
 
     # Save features to disk
     features_path = DATA_DIR / show_id / "features.json"
+    features_path.parent.mkdir(parents=True, exist_ok=True)
     features_path.write_text(features.model_dump_json(indent=2), encoding="utf-8")
 
 

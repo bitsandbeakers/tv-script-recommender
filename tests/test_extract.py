@@ -1,9 +1,14 @@
-"""Tests for feature extraction parsing and adaptive sampling."""
+"""Tests for feature extraction parsing, adaptive sampling, and hierarchical merging."""
 
 import json
 from unittest.mock import patch
 
-from backend.pipeline.extract import compute_max_chunks, parse_features_response
+from backend.pipeline.extract import (
+    EpisodeDialogue,
+    compute_max_chunks,
+    extract_show_features,
+    parse_features_response,
+)
 
 
 # --- Parsing ---
@@ -126,5 +131,97 @@ def test_extract_and_merge_uses_adaptive_count():
             content_type="Scripted", num_seasons=4, num_episodes=40,
         )
 
-    # 10 chunks extracted + 1 merge = 11 calls
-    assert mock_llm.call_count == 11
+    # 10 chunks extracted + 3 merge calls (batch of 8 + batch of 2 + final merge) = 13
+    assert mock_llm.call_count == 13
+
+
+# --- Hierarchical extraction (mocked) ---
+
+FAKE_FEATURES_JSON = json.dumps({
+    "themes": ["crime"], "tone": ["tense"], "humor_type": [],
+    "dialogue_style": ["terse"], "emotional_register": ["controlled"],
+    "pacing": "slow-burn", "genre_blend": ["drama"],
+    "narrative_structure": "serialized", "vocabulary_complexity": "moderate",
+    "style_summary": "Slow-burn crime drama with terse dialogue.",
+})
+
+
+def test_extract_show_features_movie():
+    """Movie (single episode) uses flat extraction, no hierarchy."""
+    episodes = [EpisodeDialogue(season=1, episode=1, text="Some movie dialogue.")]
+
+    with patch("backend.pipeline.extract._call_llm", return_value=FAKE_FEATURES_JSON) as mock_llm:
+        features = extract_show_features(episodes, "No Country", content_type="Movie")
+
+    assert mock_llm.call_count == 1
+    assert features.show_title == "No Country"
+    assert features.pacing == "slow-burn"
+
+
+def test_extract_show_features_single_episode_series():
+    """Single-episode series treated as movie (flat extraction)."""
+    episodes = [EpisodeDialogue(season=1, episode=1, text="Pilot dialogue.")]
+
+    with patch("backend.pipeline.extract._call_llm", return_value=FAKE_FEATURES_JSON) as mock_llm:
+        features = extract_show_features(episodes, "Pilot Show", content_type="Scripted")
+
+    assert mock_llm.call_count == 1
+    assert features.show_title == "Pilot Show"
+
+
+def test_extract_show_features_single_season():
+    """Single season: per-episode extraction + season merge (no show-level merge)."""
+    episodes = [
+        EpisodeDialogue(season=1, episode=1, text="Episode 1 dialogue."),
+        EpisodeDialogue(season=1, episode=2, text="Episode 2 dialogue."),
+    ]
+
+    with patch("backend.pipeline.extract._call_llm", return_value=FAKE_FEATURES_JSON) as mock_llm:
+        features = extract_show_features(episodes, "Fleabag")
+
+    # 2 episode extractions + 1 season merge = 3 calls
+    # (single season → season result IS the show result, no extra merge)
+    assert mock_llm.call_count == 3
+    assert features.show_title == "Fleabag"
+
+
+def test_extract_show_features_multi_season():
+    """Multi-season: per-episode + per-season merges + show-level merge."""
+    episodes = [
+        EpisodeDialogue(season=1, episode=1, text="S1E1 dialogue."),
+        EpisodeDialogue(season=1, episode=2, text="S1E2 dialogue."),
+        EpisodeDialogue(season=2, episode=1, text="S2E1 dialogue."),
+    ]
+
+    with patch("backend.pipeline.extract._call_llm", return_value=FAKE_FEATURES_JSON) as mock_llm:
+        features = extract_show_features(episodes, "Breaking Bad")
+
+    # 3 episode extractions + 1 merge for S1 (2 eps) + 0 merge for S2 (1 ep)
+    # + 1 show-level merge (2 seasons) = 5
+    assert mock_llm.call_count == 5
+    assert features.show_title == "Breaking Bad"
+
+
+def test_extract_show_features_groups_by_season():
+    """Episodes are correctly grouped by season number."""
+    episodes = [
+        EpisodeDialogue(season=2, episode=1, text="S2E1."),
+        EpisodeDialogue(season=1, episode=1, text="S1E1."),
+        EpisodeDialogue(season=1, episode=2, text="S1E2."),
+    ]
+
+    call_prompts = []
+
+    def capture_llm(prompt):
+        call_prompts.append(prompt)
+        return FAKE_FEATURES_JSON
+
+    with patch("backend.pipeline.extract._call_llm", side_effect=capture_llm):
+        features = extract_show_features(episodes, "Test Show")
+
+    assert features.show_title == "Test Show"
+    # Should have processed S1 first (2 eps), then S2 (1 ep)
+    # Verify merge prompts mention the right seasons
+    merge_prompts = [p for p in call_prompts if "Merge" in p]
+    assert any("season 1" in p for p in merge_prompts)
+    assert any("seasons of Test Show" in p for p in merge_prompts)

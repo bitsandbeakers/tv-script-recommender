@@ -5,17 +5,10 @@ This avoids OpenSubtitles API rate limits by using the pre-built
 bigscience/open_subtitles_monolingual dataset on HuggingFace.
 
 Usage:
-    # By IMDB ID (recommended — precise matching)
-    python -m scripts.ingest_from_hf --imdb-id tt0903747 --title "Breaking Bad"
-
-    # By show name (uses TMDB/TVDB to find IMDB ID, then fetches from HF)
+    python -m scripts.ingest_from_hf --title "Breaking Bad" --imdb-id tt0903747
     python -m scripts.ingest_from_hf --title "Breaking Bad"
-
-    # Skip LLM extraction (just download and parse)
-    python -m scripts.ingest_from_hf --imdb-id tt0903747 --title "Breaking Bad" --skip-llm
-
-    # Limit number of episodes
-    python -m scripts.ingest_from_hf --imdb-id tt0903747 --title "Breaking Bad" --max-episodes 10
+    python -m scripts.ingest_from_hf --title "Breaking Bad" --skip-llm
+    python -m scripts.ingest_from_hf --title "Breaking Bad" --max-episodes 10
 """
 
 import argparse
@@ -30,9 +23,8 @@ from backend.db.vector_store import upsert_show as upsert_show_vector
 from backend.metadata.enrich import enrich_show
 from backend.models.schemas import ShowInfo
 from backend.pipeline.embed import embed_text, features_to_text
-from backend.pipeline.extract import extract_and_merge_features
+from backend.pipeline.extract import EpisodeDialogue, extract_show_features
 from backend.pipeline.hf_subtitles import load_subtitles_for_imdb_ids, search_imdb_episodes
-from backend.pipeline.ingest import chunk_script
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -65,7 +57,6 @@ def main():
 
     init_db()
 
-    # Resolve IMDB ID
     imdb_id, metadata = resolve_imdb_id(args.title, args.imdb_id)
     show_name = metadata.get("title", args.title)
     show_id = show_name.lower().replace(" ", "_")
@@ -84,24 +75,31 @@ def main():
     episode_ids = episode_ids[: args.max_episodes]
     logger.info(f"Fetching subtitles for {len(episode_ids)} episodes from HuggingFace...")
 
-    # Load subtitles from HuggingFace
     subtitles = load_subtitles_for_imdb_ids(set(episode_ids), max_docs=1)
 
     if not subtitles:
         logger.error("No subtitles found in HuggingFace dataset for these IMDB IDs")
         sys.exit(1)
 
-    # Combine all subtitle documents
-    all_dialogue = []
-    for ep_id, docs in sorted(subtitles.items()):
-        for doc in docs:
-            all_dialogue.append(f"--- Episode {ep_id} ---\n{doc}")
+    # Build structured episode data
+    # HF dataset doesn't carry season/episode numbers, so we assign sequentially
+    episode_dialogues: list[EpisodeDialogue] = []
+    num_seasons = metadata.get("num_seasons", 1) or 1
+    total_eps = len(subtitles)
+    eps_per_season = max(1, total_eps // num_seasons)
 
-    combined = "\n\n".join(all_dialogue)
-    num_episodes = len(subtitles)
-    logger.info(f"Got {len(combined):,} chars of dialogue from {num_episodes} episodes")
+    for i, (ep_id, docs) in enumerate(sorted(subtitles.items())):
+        season = (i // eps_per_season) + 1
+        episode = (i % eps_per_season) + 1
+        text = "\n".join(docs)
+        if text.strip():
+            episode_dialogues.append(EpisodeDialogue(season=season, episode=episode, text=text))
+
+    total_chars = sum(len(ep.text) for ep in episode_dialogues)
+    logger.info(f"Got {total_chars:,} chars of dialogue from {len(episode_dialogues)} episodes")
 
     # Save raw dialogue
+    combined = "\n\n".join(f"--- S{e.season:02d}E{e.episode:02d} ---\n{e.text}" for e in episode_dialogues)
     dialogue_path = show_dir / "dialogue.txt"
     dialogue_path.write_text(combined, encoding="utf-8")
 
@@ -121,21 +119,17 @@ def main():
             status=metadata.get("status", ""),
             num_seasons=metadata.get("num_seasons", 0),
             num_episodes=metadata.get("num_episodes", 0),
-            num_episodes_analyzed=num_episodes,
+            num_episodes_analyzed=len(episode_dialogues),
         )
         upsert_show_metadata(show_info)
         logger.info("Done (metadata saved, LLM skipped)")
         return
 
-    # Feature extraction
-    chunks = chunk_script(combined)
-    logger.info(f"Split into {len(chunks)} chunks for analysis")
-
-    features = extract_and_merge_features(
-        chunks, show_name,
+    # Hierarchical feature extraction
+    features = extract_show_features(
+        episode_dialogues,
+        show_name,
         content_type=metadata.get("content_type", "Scripted"),
-        num_seasons=metadata.get("num_seasons", 1),
-        num_episodes=metadata.get("num_episodes", 0),
     )
     logger.info(f"Extracted features: {features.style_summary}")
 
@@ -146,7 +140,7 @@ def main():
 
     vector_metadata = {
         "title": show_name,
-        "num_episodes": num_episodes,
+        "num_episodes": len(episode_dialogues),
         "style_summary": features.style_summary,
         "themes": ",".join(features.themes),
         "tone": ",".join(features.tone),
@@ -168,7 +162,7 @@ def main():
         status=metadata.get("status", ""),
         num_seasons=metadata.get("num_seasons", 0),
         num_episodes=metadata.get("num_episodes", 0),
-        num_episodes_analyzed=num_episodes,
+        num_episodes_analyzed=len(episode_dialogues),
         features=features,
     )
     upsert_show_metadata(show_info)
