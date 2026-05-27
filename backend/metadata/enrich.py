@@ -23,8 +23,6 @@ def enrich_show(query: str, year: int | None = None, imdb_id: str = "") -> dict 
             with TMDBClient() as client:
                 if imdb_id:
                     metadata = client.find_by_imdb(imdb_id)
-                    if metadata:
-                        metadata = client._normalize(metadata)
                 if not metadata:
                     metadata = client.get_show_metadata(query, year=year)
                 if metadata:

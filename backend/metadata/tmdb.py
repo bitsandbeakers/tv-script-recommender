@@ -46,7 +46,7 @@ class TMDBClient:
         return resp.json()
 
     def find_by_imdb(self, imdb_id: str) -> dict | None:
-        """Find a TV show by IMDB ID."""
+        """Find a TV show by IMDB ID, returning normalized metadata."""
         resp = self._client.get(
             f"/find/{imdb_id}",
             params={"external_source": "imdb_id", "language": "en-US"},
@@ -55,7 +55,8 @@ class TMDBClient:
         tv_results = resp.json().get("tv_results", [])
         if not tv_results:
             return None
-        return self.get_details(tv_results[0]["id"])
+        details = self.get_details(tv_results[0]["id"])
+        return self._normalize(details) if details else None
 
     def get_show_metadata(self, query: str, year: int | None = None) -> dict | None:
         """Search for a show and return normalized metadata."""
