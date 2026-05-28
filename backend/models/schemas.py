@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -47,7 +49,7 @@ class FeedbackSignal(BaseModel):
     """User feedback on a recommendation or show."""
 
     show_id: str
-    signal: str  # "like", "dislike", "skip"
+    signal: Literal["like", "dislike", "skip"]
     # Optional: which dimension the feedback targets
     # e.g. "tone", "pacing" — None means the show overall
     dimension: str | None = None
