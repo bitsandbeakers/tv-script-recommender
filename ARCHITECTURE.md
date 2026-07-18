@@ -171,8 +171,67 @@
 │   ├── GET  /lookup?q=             external metadata lookup              │
 │   └── GET  /health                status + show count                   │
 │                                                                         │
+│   Users & feedback                                                      │
+│   ├── POST   /users                        create profile               │
+│   ├── GET    /users, /users/{id}           list / fetch profile         │
+│   ├── DELETE /users/{id}                   delete (cascades feedback)   │
+│   ├── PUT    /users/{id}/feedback          rate a show (1 / -1)         │
+│   ├── GET    /users/{id}/feedback          rating history               │
+│   ├── DELETE /users/{id}/feedback/{show}   clear a rating               │
+│   └── GET    /users/{id}/recommendations   personalized recs            │
+│                                                                         │
 │   CORS: http://localhost:5173 (Vite dev server)                         │
 └─────────────────────────────────────────────────────────────────────────┘
+
+
+## Personalized Recommendations (backend/recommender/personalize.py)
+
+Per-user hybrid ranking built from stored 👍/👎 feedback:
+
+1. **Taste vector** — mean of liked shows' embeddings, pushed away from the
+   mean of disliked embeddings (weight 0.3), normalized. An optional
+   free-text query is blended in at 1.5x the weight of each liked show.
+2. **Candidate retrieval** — ChromaDB cosine search over the taste vector,
+   over-fetching so already-rated shows can be filtered out.
+3. **Collaborative signal** — item-item co-preference: users whose liked
+   sets overlap with this user's (cosine on like-sets) boost the candidates
+   they also liked; normalized to [0, 1].
+4. **Blend** — `0.7 * semantic + 0.3 * collaborative`, minus a penalty
+   (0.3 × max cosine similarity) for candidates close to disliked shows.
+
+Users and feedback live in SQLite (`backend/db/user_store.py`), alongside
+the show catalog.
+
+
+## Evaluation Harness (backend/eval/)
+
+Curated ground truth (`data/ground_truth.json`) defines stylistic
+similar-show groups and natural-language query cases. The harness
+(`harness.py`) runs both retrieval modes against the live catalog and
+scores them with precision@k, recall@k, hit rate@k, MRR, and nDCG@k
+(`metrics.py`). Cases referencing shows missing from the catalog are
+skipped and reported, so evals stay meaningful on a partial catalog.
+CLI: `python scripts/run_eval.py [--k 5 10] [--json report.json]`.
+
+
+## Frontend (frontend/)
+
+React 18 + Vite + React Router single-page app, talking to the API through
+the Vite `/api` dev proxy:
+
+- **Search** — free-text style queries plus "more like" show anchors
+  (debounced title autocomplete), results as a card grid with similarity
+  bars, feature chips, and style summaries
+- **Browse** — full catalog with client-side filtering
+- **Show detail** — metadata, script-analysis table, similar-shows grid
+- **Profile** — create/select user profiles (persisted in localStorage),
+  rating history, personalized recommendations with an optional steering
+  query
+- Every card carries 👍/👎 buttons that write to the feedback API when a
+  profile is active
+
+`scripts/seed_demo.py` seeds 18 shows with hand-authored features so the
+app runs end-to-end without any API keys.
 
 
 ## External Services
