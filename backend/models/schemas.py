@@ -43,6 +43,31 @@ class ShowInfo(BaseModel):
     features: ScriptFeatures | None = None
 
 
+class UserProfile(BaseModel):
+    """A user of the recommender, with aggregate feedback counts."""
+
+    id: str
+    name: str
+    num_liked: int = 0
+    num_disliked: int = 0
+
+
+class CreateUserRequest(BaseModel):
+    name: str
+
+
+class FeedbackItem(BaseModel):
+    """A single user rating for a show: 1 (like) or -1 (dislike)."""
+
+    show_id: str
+    rating: int
+
+
+class FeedbackRequest(BaseModel):
+    show_id: str
+    rating: int  # 1 or -1
+
+
 class RecommendationRequest(BaseModel):
     """User request for recommendations."""
 
@@ -51,6 +76,8 @@ class RecommendationRequest(BaseModel):
     liked_shows: list[str] = []
     disliked_shows: list[str] = []
     top_k: int = 10
+    # Optional: personalize using this user's stored feedback history
+    user_id: str = ""
 
 
 class RecommendationResult(BaseModel):

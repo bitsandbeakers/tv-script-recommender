@@ -2,10 +2,20 @@
 
 from fastapi import APIRouter, HTTPException
 
-from backend.db import show_store
+from backend.db import show_store, user_store
 from backend.metadata.enrich import enrich_show
-from backend.models.schemas import RecommendationRequest, RecommendationResponse, RecommendationResult, ShowInfo
+from backend.models.schemas import (
+    CreateUserRequest,
+    FeedbackItem,
+    FeedbackRequest,
+    RecommendationRequest,
+    RecommendationResponse,
+    RecommendationResult,
+    ShowInfo,
+    UserProfile,
+)
 from backend.recommender.engine import recommend_blended, recommend_by_show, recommend_by_text
+from backend.recommender.personalize import recommend_personalized
 
 router = APIRouter()
 
@@ -87,6 +97,90 @@ def lookup_show(q: str):
     return metadata
 
 
+# --- Users & feedback ---
+
+
+@router.post("/users", response_model=UserProfile)
+def create_user(request: CreateUserRequest):
+    """Create a user profile."""
+    if not request.name.strip():
+        raise HTTPException(status_code=400, detail="Name must not be empty")
+    return user_store.create_user(request.name.strip())
+
+
+@router.get("/users", response_model=list[UserProfile])
+def list_users():
+    return user_store.list_users()
+
+
+@router.get("/users/{user_id}", response_model=UserProfile)
+def get_user(user_id: str):
+    user = user_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@router.delete("/users/{user_id}")
+def delete_user(user_id: str):
+    if not user_store.delete_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "deleted", "id": user_id}
+
+
+@router.put("/users/{user_id}/feedback")
+def set_feedback(user_id: str, request: FeedbackRequest):
+    """Record a like (rating=1) or dislike (rating=-1) for a show."""
+    if not user_store.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    if not show_store.get_show(request.show_id):
+        raise HTTPException(status_code=404, detail="Show not found")
+    if request.rating not in (-1, 1):
+        raise HTTPException(status_code=400, detail="Rating must be 1 or -1")
+    user_store.set_feedback(user_id, request.show_id, request.rating)
+    return {"status": "ok", "show_id": request.show_id, "rating": request.rating}
+
+
+@router.delete("/users/{user_id}/feedback/{show_id}")
+def remove_feedback(user_id: str, show_id: str):
+    if not user_store.remove_feedback(user_id, show_id):
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    return {"status": "deleted", "show_id": show_id}
+
+
+@router.get("/users/{user_id}/feedback", response_model=list[FeedbackItem])
+def get_feedback(user_id: str):
+    if not user_store.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    return user_store.get_feedback(user_id)
+
+
+@router.get("/users/{user_id}/recommendations", response_model=RecommendationResponse)
+def get_personalized_recommendations(user_id: str, query: str = "", top_k: int = 10):
+    """Personalized recommendations from the user's feedback history.
+
+    Blends a semantic taste vector (built from liked/disliked shows, plus an
+    optional free-text query) with an item-item collaborative signal.
+    """
+    user = user_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.num_liked == 0 and not query:
+        raise HTTPException(
+            status_code=400,
+            detail="User has no liked shows yet — like some shows or provide a query",
+        )
+
+    raw_results = recommend_personalized(user_id, query=query, top_k=top_k)
+    interpretation = f"Personalized for {user.name}"
+    if query:
+        interpretation += f", query='{query}'"
+    return RecommendationResponse(
+        results=_format_results(raw_results),
+        query_interpretation=interpretation,
+    )
+
+
 # --- Recommendations ---
 
 
@@ -94,13 +188,25 @@ def lookup_show(q: str):
 def get_recommendations(request: RecommendationRequest):
     """Get TV show recommendations.
 
-    Supports three modes:
+    Supports four modes:
     - Free-text query: "dark comedy with sharp dialogue"
     - Similar to show: provide liked_shows list
     - Blended: combine query + liked/disliked shows
+    - Personalized: provide user_id to use stored feedback history
     """
+    if request.user_id:
+        user = user_store.get_user(request.user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        raw_results = recommend_personalized(request.user_id, query=request.query, top_k=request.top_k)
+        return RecommendationResponse(
+            results=_format_results(raw_results),
+            query_interpretation=f"Personalized for {user.name}"
+            + (f", query='{request.query}'" if request.query else ""),
+        )
+
     if not request.query and not request.liked_shows:
-        raise HTTPException(status_code=400, detail="Provide a query or liked shows")
+        raise HTTPException(status_code=400, detail="Provide a query, liked shows, or a user_id")
 
     # Choose recommendation strategy
     if request.liked_shows and (request.query or request.disliked_shows):
