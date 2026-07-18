@@ -2,9 +2,9 @@
 
 import logging
 
+from backend.core.config import settings
 from backend.metadata.tmdb import TMDBClient
 from backend.metadata.tvdb import TVDBClient
-from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 

@@ -73,6 +73,7 @@ def search_imdb_episodes(parent_imdb_id: str) -> list[str]:
     import csv
     import gzip
     import io
+
     import httpx
 
     logger.info(f"Fetching IMDB episode data for {parent_imdb_id}...")

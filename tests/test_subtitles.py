@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def test_search_builds_correct_params():
     """Verify search constructs the right query params."""
@@ -29,7 +27,7 @@ def test_search_builds_correct_params():
             client._client = mock_client
             client._token = None
 
-            result = client.search("Breaking Bad", season=1, language="en")
+            client.search("Breaking Bad", season=1, language="en")
 
             call_args = mock_client.request.call_args
             assert call_args[0] == ("GET", "/subtitles")

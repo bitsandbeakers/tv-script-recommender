@@ -74,10 +74,14 @@ def upsert_show(show: ShowInfo) -> None:
                 tmdb_id = COALESCE(excluded.tmdb_id, shows.tmdb_id),
                 tvdb_id = COALESCE(excluded.tvdb_id, shows.tvdb_id),
                 status = CASE WHEN excluded.status != '' THEN excluded.status ELSE shows.status END,
-                num_seasons = CASE WHEN excluded.num_seasons > 0 THEN excluded.num_seasons ELSE shows.num_seasons END,
-                num_episodes = CASE WHEN excluded.num_episodes > 0 THEN excluded.num_episodes ELSE shows.num_episodes END,
-                num_episodes_analyzed = CASE WHEN excluded.num_episodes_analyzed > 0 THEN excluded.num_episodes_analyzed ELSE shows.num_episodes_analyzed END,
-                features_json = CASE WHEN excluded.features_json != '{}' THEN excluded.features_json ELSE shows.features_json END,
+                num_seasons = CASE WHEN excluded.num_seasons > 0
+                    THEN excluded.num_seasons ELSE shows.num_seasons END,
+                num_episodes = CASE WHEN excluded.num_episodes > 0
+                    THEN excluded.num_episodes ELSE shows.num_episodes END,
+                num_episodes_analyzed = CASE WHEN excluded.num_episodes_analyzed > 0
+                    THEN excluded.num_episodes_analyzed ELSE shows.num_episodes_analyzed END,
+                features_json = CASE WHEN excluded.features_json != '{}'
+                    THEN excluded.features_json ELSE shows.features_json END,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (show.id, show.title, show.year, show.network, genres_json, show.overview,

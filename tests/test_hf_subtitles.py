@@ -1,6 +1,6 @@
 """Tests for HuggingFace subtitle loading (unit tests, no actual HF downloads)."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 def test_load_subtitles_filters_by_imdb_id():
