@@ -16,7 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.db.show_store import init_db, upsert_show as upsert_show_metadata
+from backend.db.show_store import init_db
+from backend.db.show_store import upsert_show as upsert_show_metadata
 from backend.db.vector_store import upsert_show as upsert_show_vector
 from backend.metadata.enrich import enrich_show
 from backend.models.schemas import ShowInfo
@@ -225,7 +226,10 @@ def main():
         show_name = episodes[0].get("parent_title", args.show)
         year = episodes[0].get("year")
         imdb_id_raw = episodes[0].get("imdb_id")
-        imdb_id = f"tt{imdb_id_raw}" if imdb_id_raw and not str(imdb_id_raw).startswith("tt") else str(imdb_id_raw or "")
+        if imdb_id_raw and not str(imdb_id_raw).startswith("tt"):
+            imdb_id = f"tt{imdb_id_raw}"
+        else:
+            imdb_id = str(imdb_id_raw or "")
         logger.info(f"Found {len(episodes)} episodes for '{show_name}'")
 
         if args.search_only:

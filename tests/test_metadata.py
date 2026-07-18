@@ -1,6 +1,6 @@
 """Tests for TMDB and TVDB metadata clients (unit tests with mocking)."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from backend.metadata.tmdb import TMDBClient
 

@@ -25,7 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.db.show_store import init_db, upsert_show as upsert_show_metadata
+from backend.db.show_store import init_db
+from backend.db.show_store import upsert_show as upsert_show_metadata
 from backend.db.vector_store import upsert_show as upsert_show_vector
 from backend.metadata.enrich import enrich_show
 from backend.models.schemas import ShowInfo
